@@ -1,0 +1,19 @@
+name: Runner Test
+
+on:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: self-hosted
+
+    steps:
+      - name: Show system information
+        run: |
+          echo "Runner is working!"
+          hostname
+          whoami
+          uname -a
+          docker --version
+          docker compose version
+          git --version
