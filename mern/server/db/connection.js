@@ -1,25 +1,25 @@
-import { MongoClient, ServerApiVersion } from "mongodb";
+import { MongoClient } from "mongodb";
 
-const URI = process.env.ATLAS_URI || "";
-const client = new MongoClient(URI, {
-  serverApi: {
-    version: ServerApiVersion.v1,
-    strict: true,
-    deprecationErrors: true,
-  },
-  appName: "devrel-github-javascript-mern",
-});
+const URI = process.env.MONGO_URI;
 
-try {
-  // Connect the client to the server
-  await client.connect();
-  // Send a ping to confirm a successful connection
-  await client.db("admin").command({ ping: 1 });
-  console.log("Pinged your deployment. You successfully connected to MongoDB!");
-} catch (err) {
-  console.error(err);
+if (!URI) {
+  throw new Error("MONGO_URI environment variable is required");
 }
 
-let db = client.db("employees");
+const client = new MongoClient(URI);
+
+try {
+  await client.connect();
+  await client.db("admin").command({ ping: 1 });
+
+  console.log("MongoDB connection established successfully.");
+} catch (err) {
+  console.error("MongoDB connection failed:", err);
+  process.exit(1);
+}
+
+const db = client.db("employees");
+
+export { client };
 
 export default db;
