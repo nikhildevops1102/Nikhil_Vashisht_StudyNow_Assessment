@@ -2,9 +2,9 @@
 
 Production-oriented deployment and operations setup for the MongoDB MERN Stack Example, prepared for the Study Now / Global Student Pathway DevOps Engineer assessment.
 
-The focus of this implementation is reliable deployment, health verification, rollback, authenticated MongoDB access, encrypted off-host backups, restore verification, and operational documentation.
+The focus of this implementation is reliable deployment, health verification, rollback, authenticated MongoDB access, encrypted off-host backups, restore verification, monitoring, and operational documentation.
 
-> **Original application:** This assessment uses the MongoDB Developer MERN Stack Example as the application starting point. The original project is available at:
+> **Original application:** This assessment uses the MongoDB Developer MERN Stack Example as the application starting point:
 > https://github.com/mongodb-developer/mern-stack-example
 >
 > The application code has been kept intentionally minimal. Infrastructure, deployment, backup, monitoring, and operational changes are the primary focus of this assessment.
@@ -22,12 +22,14 @@ The implementation addresses the core requirements of the assessment:
 - Two application containers for blue/green deployment
 - Health-checked deployment
 - Automatic rollback on deployment verification failure
-- GitHub Actions CI/CD using a self-hosted runner
+- GitHub Actions CI/CD using a dedicated self-hosted runner
 - Hourly encrypted MongoDB backups
 - Cloudflare R2 off-host backup storage
-- Restore drill with measured MongoDB restore duration
+- Reusable MongoDB restore script
+- Measured restore drill with RTO/RPO evidence
 - Five-minute application health monitoring
-- Operational runbook and disaster-recovery considerations
+- Failure notification path testing
+- Operational runbook and disaster-recovery documentation
 
 The assessment prioritizes reliable and explainable operations over adding unnecessary infrastructure or tooling.
 
@@ -49,33 +51,134 @@ The assessment prioritizes reliable and explainable operations over adding unnec
                            v
                   Docker Compose Stack
                            |
-              +------------+------------+
-              |                         |
-              v                         v
-        Nginx Gateway              MongoDB 8
-        Port 8080                  Internal only
-              |
-              v
-       Active API Backend
-          /          \
-         /            \
-   API Blue         API Green
-   :5050            :5050
+             +-------------+-------------+
+             |                           |
+             v                           v
+       Nginx Gateway              MongoDB 8
+             |                           |
+       +-----+-----+                     |
+       |           |                     |
+       v           v                     |
+   API Blue     API Green ---------------+
+       |           |
+       +-----+-----+
+             |
+             v
+        employees DB
 
-          Blue/Green deployment
-                 |
-                 v
-        Health verification
-                 |
-        +--------+--------+
-        |                 |
-      Success           Failure
-        |                 |
-        v                 v
-   Keep new color      Automatic rollback
+MongoDB backup
+      |
+      v
+GPG AES-256 encryption
+      |
+      v
+Cloudflare R2
 ```
 
-### Current state
+### Assessment VM
+
+The assessment was implemented on an Ubuntu Linux VM with Docker and Docker Compose.
+
+The assessment environment uses host port `8080` for the Nginx gateway because the VM already has another service using host port `80`.
+
+In the production design, Nginx can be exposed through the standard HTTP/HTTPS entry point behind Cloudflare.
+
+---
+
+## 3. Application
+
+The application is the MongoDB Developer MERN Stack Example.
+
+It provides a small employee-record CRUD application and was selected so the assessment could focus on production infrastructure rather than application development.
+
+The original application source and license are retained and credited.
+
+Application changes were intentionally kept minimal:
+
+- Configurable MongoDB connection through `MONGO_URI`
+- `/health` endpoint for application and database health
+- Production containerization
+
+---
+
+## 4. Containerization
+
+The application is split into:
+
+- React/Vite frontend
+- Node/Express API
+- MongoDB
+- Nginx gateway
+
+### API container
+
+The API uses a Node 20 production image.
+
+The container:
+
+- installs production dependencies
+- runs as the non-root `node` user
+- exposes port `5050` internally
+- uses `MONGO_URI` from the environment
+
+### Frontend container
+
+The frontend uses a multi-stage Docker build:
+
+1. Node builds the React/Vite application.
+2. Nginx serves the generated static files.
+
+### MongoDB
+
+MongoDB is not exposed on a host port.
+
+It is reachable only through the internal Docker network.
+
+---
+
+## 5. MongoDB Security
+
+MongoDB authentication is enabled.
+
+A root/admin account is used only for administrative operations.
+
+The application uses a separate user:
+
+```text
+app_user
+```
+
+The application user has only:
+
+```text
+readWrite on employees
+```
+
+The application does not use the MongoDB root account.
+
+MongoDB health checks authenticate against the administrative database.
+
+Secrets are supplied through the local `.env` file and are not committed to Git.
+
+The repository contains only:
+
+```text
+.env.example
+```
+
+with placeholder values.
+
+---
+
+## 6. Nginx Gateway
+
+Nginx provides:
+
+- frontend serving
+- SPA fallback
+- API reverse proxy
+- `/health` proxying
+- blue/green backend switching
 
 The active backend is controlled by:
 
@@ -85,180 +188,48 @@ nginx/active-backend.conf
 
 Example:
 
-```nginx
+```text
 server api-green:5050;
 ```
 
-Only the active API receives application traffic through Nginx. The inactive API remains available as the deployment target.
+The active backend can therefore be switched without changing application code.
 
 ---
 
-## 3. Application
+## 7. Blue/Green Deployment and Rollback
 
-The application is the MongoDB Developer MERN Stack Example:
-
-- React/Vite frontend
-- Node.js/Express REST API
-- MongoDB
-- Employee records CRUD functionality
-
-The application has been modified minimally for the assessment.
-
-### Application health endpoint
-
-```text
-GET /health
-```
-
-Example successful response:
-
-```json
-{
-  "status": "healthy",
-  "database": "connected"
-}
-```
-
-The health endpoint verifies MongoDB connectivity rather than only confirming that the Node.js process is running.
-
----
-
-## 4. Containerization
-
-The application is containerized using Docker Compose.
-
-Services:
-
-```text
-mongodb
-api-blue
-api-green
-nginx
-```
-
-### API container
-
-The API uses a Node.js 20 production image.
-
-The container:
-
-- installs production dependencies with `npm ci --omit=dev`
-- runs as the non-root `node` user
-- exposes port 5050 internally
-- provides the `/health` endpoint
-
-### Frontend / Nginx container
-
-The frontend is built using Node.js and served by Nginx.
-
-Nginx also acts as the gateway to the active API backend.
-
-The assessment VM already has another service using host port 80, so the assessment gateway is exposed locally on:
-
-```text
-http://localhost:8080
-```
-
-The production design can expose Nginx on the standard HTTP/HTTPS ports behind the appropriate edge/load-balancing layer.
-
----
-
-## 5. MongoDB Security
-
-MongoDB is not exposed directly to the host.
-
-The application uses a dedicated MongoDB user:
-
-```text
-app_user
-```
-
-The application user has:
-
-```text
-readWrite
-```
-
-on the:
-
-```text
-employees
-```
-
-database only.
-
-The MongoDB root account is used only for administrative operations such as backup.
-
-### Secrets
-
-Secrets are not committed to Git.
-
-Local environment configuration is stored in:
-
-```text
-.env
-```
-
-and is excluded by `.gitignore`.
-
-A safe template is provided as:
-
-```text
-.env.example
-```
-
-No production passwords or R2 credentials are stored in the repository.
-
----
-
-## 6. Blue/Green Deployment
-
-Deployment is implemented in:
+The deployment script is:
 
 ```text
 scripts/deploy.sh
 ```
 
-The deployment process is:
+The deployment process:
 
-1. Determine the currently active backend.
-2. Select the inactive color as the deployment target.
-3. Build the inactive API image.
-4. Start the inactive API container.
-5. Wait for the Docker health check.
-6. Verify the API `/health` endpoint directly.
-7. Update the Nginx active backend.
-8. Validate the Nginx configuration.
-9. Reload Nginx.
-10. Verify the public application health endpoint.
-11. Keep the previous backend available as the rollback target.
+1. Determines the currently active backend.
+2. Selects the inactive backend as the deployment target.
+3. Builds the target API image.
+4. Starts the target API container.
+5. Waits for its Docker health check.
+6. Verifies the API health endpoint directly.
+7. Changes the Nginx active backend.
+8. Validates the Nginx configuration.
+9. Reloads Nginx without stopping the gateway.
+10. Verifies the public application health endpoint.
+11. Leaves the previous backend available as the rollback target.
 
-The goal is to avoid taking the application offline during a normal deployment.
-
----
-
-## 7. Rollback
+### Rollback
 
 The deployment script uses an error trap to restore the previous Nginx backend when deployment verification fails.
 
-Rollback restores the previous:
+A deliberate failure was introduced during testing.
 
-```text
-nginx/active-backend.conf
-```
-
-and reloads Nginx.
-
-### Rollback drill
-
-A deliberate deployment failure was introduced during testing.
-
-The deployment:
+The rollback drill demonstrated that the deployment:
 
 1. Started the new backend.
 2. Confirmed the new backend was healthy.
 3. Switched traffic.
-4. Triggered the intentional verification failure.
+4. Triggered an intentional verification failure.
 5. Automatically restored the previous backend.
 6. Reloaded Nginx.
 7. Confirmed the application remained healthy.
@@ -277,116 +248,175 @@ GitHub Actions workflow:
 
 The workflow runs on the dedicated self-hosted runner.
 
-Pipeline stages:
+The runner is a dedicated Linux VM user:
+
+```text
+github-runner
+```
+
+The runner has Docker access but does not have general sudo access.
+
+### Pipeline flow
 
 ```text
 Checkout
    |
+   v
 Environment verification
    |
+   v
 Docker Compose validation
    |
+   v
 Build application images
    |
-MongoDB health verification
+   v
+Synchronize deployment checkout to exact commit
    |
-Blue/Green deployment
+   v
+Verify MongoDB health
    |
+   v
+Blue/green deployment
+   |
+   v
 Application health verification
    |
-API verification
+   v
+API endpoint verification
    |
-Active backend reporting
+   v
+Container status
 ```
 
-The runner is a dedicated Linux user with Docker access and does not have general sudo privileges.
+The deployment checkout is synchronized to the exact GitHub Actions commit SHA before deployment.
 
-### Manual deployment
+The real production `.env` remains on the assessment VM and is not stored in GitHub.
 
-The deployment can also be executed directly on the assessment VM:
-
-```bash
-./scripts/deploy.sh
-```
+The current application sample does not provide a meaningful server-side test suite; its server `npm test` script is the default placeholder that exits with an error. The client does provide an ESLint script. This limitation is documented rather than replacing the application's test command with a fabricated test.
 
 ---
 
-## 9. MongoDB Backups
+## 9. Backups
 
-Backup implementation:
+MongoDB backup script:
 
 ```text
 scripts/backup-mongodb.sh
 ```
 
-Backups run hourly using:
-
-```text
-/etc/cron.d/study-now-mongodb-backup
-```
-
-Schedule:
-
-```cron
-0 * * * * root /opt/study-now/mern-stack-example/scripts/backup-mongodb.sh
-```
-
-### Backup process
-
-The script:
+The backup process:
 
 1. Reads the MongoDB administrative credential from the local environment file.
-2. Runs `mongodump` from the MongoDB container.
+2. Runs `mongodump` from the MongoDB 8 container.
 3. Creates a compressed archive.
 4. Encrypts the archive using GPG AES-256.
-5. Uploads the encrypted object to Cloudflare R2.
-6. Verifies the uploaded object.
+5. Uploads the encrypted backup to Cloudflare R2.
+6. Verifies the R2 object using `head-object`.
 7. Removes temporary plaintext backup data.
-8. Removes encrypted local backups older than seven days.
+8. Removes local encrypted backups older than seven days.
 
-The backup stored in R2 is private.
+The backup schedule is:
+
+```cron
+0 * * * * root /opt/study-now/mern-stack-example/scripts/backup-mongodb.sh >> /var/log/study-now-mongodb-backup.log 2>&1
+```
+
+This runs once per hour.
 
 ### Backup destination
 
+Cloudflare R2 bucket:
+
 ```text
-Cloudflare R2
-Bucket: study-now-mongodb-backups
+study-now-mongodb-backups
 ```
 
-The R2 credentials are stored outside the Git repository and are scoped to the backup bucket.
+The bucket is private.
+
+The R2 API credentials are stored outside the Git repository and are scoped to the backup bucket.
 
 ---
 
 ## 10. Restore Drill
 
-A restore drill was performed against the assessment environment.
-
-The drill included:
-
-1. Creating a test database record.
-2. Taking an encrypted MongoDB backup.
-3. Downloading the backup from R2.
-4. Decrypting the backup.
-5. Verifying the archive contents.
-6. Dropping the application database.
-7. Confirming the application returned no records.
-8. Restoring the MongoDB archive.
-9. Confirming the record was recovered.
-10. Confirming the application health endpoint returned healthy.
-
-### Measured result
-
-Measured MongoDB restore duration:
+A reusable restore script is provided:
 
 ```text
-1 minute 9.44 seconds
+scripts/restore-mongodb.sh
 ```
 
-This measurement represents the database restore portion of the recovery process.
+The script:
 
-It is **not claimed as the complete end-to-end application RTO**.
+1. Downloads an encrypted backup from Cloudflare R2.
+2. Decrypts the backup.
+3. Copies the archive into the MongoDB container.
+4. Performs an authenticated `mongorestore --dryRun` verification.
+5. Requires explicit `RESTORE` confirmation before destructive recovery.
+6. Drops the `employees` database when `--drop` is supplied.
+7. Restores the MongoDB archive.
+8. Verifies application health.
+9. Removes temporary restore files.
 
-A final end-to-end recovery measurement should include the complete recovery sequence, including application availability verification.
+A final restore drill was performed against the assessment environment.
+
+### Restore drill evidence
+
+Backup used:
+
+```text
+mongodb/20261002T063001Z.archive.gz.gpg
+```
+
+Recovery start:
+
+```text
+2026-10-02T06:55:39Z
+```
+
+MongoDB restore completed:
+
+```text
+2026-10-02T06:56:01.127Z
+```
+
+Application health verification completed:
+
+```text
+2026-10-02T06:56:01Z
+```
+
+Measured recovery time from the recorded recovery start to application health verification:
+
+```text
+~22 seconds
+```
+
+This is the measured RTO for this assessment restore drill on the assessment VM and dataset. It is not presented as a guaranteed production RTO.
+
+### Restore verification
+
+Before the restore, an `RPO_DRILL` record was deliberately created after the selected backup.
+
+After the database was dropped and restored:
+
+```text
+RPO_DRILL documents: 0
+```
+
+This demonstrated that data created after the selected recovery point was not present after restoration.
+
+The record contained in the backup was successfully recovered:
+
+```text
+Backup Restore Test
+```
+
+The application also returned:
+
+```json
+{"status":"healthy","database":"connected"}
+```
 
 ---
 
@@ -404,6 +434,26 @@ The actual data-loss window is dependent on:
 - restore availability
 
 Therefore, the hourly schedule is documented as the **RPO design target**, not as a claim that every recovery will always have exactly one hour or less of data loss.
+
+### Observed restore drill
+
+The selected backup was created at approximately:
+
+```text
+2026-10-02T06:30:01Z
+```
+
+The RPO test record was created at:
+
+```text
+2026-10-02T06:47:31Z
+```
+
+The test record was therefore created approximately 17 minutes 30 seconds after the selected backup.
+
+The record was absent after restoration, confirming the expected data-loss boundary for that recovery point.
+
+This is an observed drill result, not a guarantee that every recovery will have the same data-loss window.
 
 ---
 
@@ -433,11 +483,11 @@ The health check verifies:
 http://localhost:8080/health
 ```
 
-If the check fails, the script can send a JSON notification to a configured webhook.
+If the check fails, the configured webhook is called.
 
 The failure path was tested using a temporary local webhook receiver.
 
-No production Slack/Discord integration is claimed as part of this assessment environment.
+No production Slack, Discord, or email integration is claimed as part of the assessment environment; the webhook endpoint is externally configurable.
 
 ---
 
@@ -446,81 +496,96 @@ No production Slack/Discord integration is claimed as part of this assessment en
 Implemented controls include:
 
 - MongoDB authentication
-- Dedicated least-privilege application database user
+- Least-privilege application database user
 - MongoDB not exposed on a host port
-- Secrets excluded from Git
-- Encrypted MongoDB backups
-- Private R2 backup bucket
+- Application containers run without root privileges where applicable
+- Secrets kept outside Git
+- Private R2 bucket
 - Bucket-scoped R2 credentials
-- API containers running as non-root
-- Dedicated self-hosted GitHub runner user
-- No general sudo access for the GitHub runner
-- Health checks for deployment verification
-- Automatic deployment rollback
-- Backup verification after upload
+- Encrypted MongoDB backups
+- Off-host backup storage
+- Dedicated self-hosted GitHub runner
+- Runner does not have general sudo access
+- Health checks
+- Deployment rollback
+- Explicit confirmation for destructive database restore
+- Temporary restore files removed after recovery
+
+The repository should be audited before submission to ensure no credentials or temporary files are tracked.
 
 ---
 
 ## 14. Operational Runbook
 
-### 2 AM deployment check
+### Check application health
 
 ```bash
-cd /opt/study-now/mern-stack-example
-
-docker compose ps
-
 curl -fsS http://localhost:8080/health
-
-cat nginx/active-backend.conf
 ```
 
-Expected health response:
+Expected result:
 
 ```json
-{
-  "status": "healthy",
-  "database": "connected"
-}
+{"status":"healthy","database":"connected"}
 ```
 
-### If deployment fails
-
-Check:
-
-```bash
-docker compose ps
-docker compose logs api-blue
-docker compose logs api-green
-docker compose logs nginx
-```
-
-Then verify:
+### Check active backend
 
 ```bash
 cat nginx/active-backend.conf
-curl -fsS http://localhost:8080/health
 ```
 
-The deployment script is designed to restore the previous backend when deployment verification fails.
+### Check containers
 
-### Backup verification
+```bash
+docker compose ps
+```
 
-Check the backup log:
+### Deploy
+
+```bash
+./scripts/deploy.sh
+```
+
+### Verify API
+
+```bash
+curl -fsS http://localhost:8080/record
+```
+
+### Check backup logs
 
 ```bash
 tail -n 100 /var/log/study-now-mongodb-backup.log
 ```
 
-List R2 backup objects using the configured administrative environment/profile.
-
-### Health monitoring
-
-Check:
+### Check health monitoring logs
 
 ```bash
 tail -n 100 /var/log/study-now-health-check.log
 ```
+
+### Restore
+
+Use a known R2 backup object:
+
+```bash
+./scripts/restore-mongodb.sh mongodb/<backup-file>.archive.gz.gpg --drop
+```
+
+The restore script requires explicit confirmation before dropping the application database.
+
+### 2am checklist
+
+1. Check application health.
+2. Check Docker container status.
+3. Check active backend.
+4. Check recent backup log.
+5. Confirm the latest backup exists in R2.
+6. Check health monitoring logs.
+7. Check recent CI/CD runs.
+8. If deployment is unhealthy, use the previous blue/green backend as the rollback target.
+9. If data recovery is required, follow the tested restore procedure rather than improvising commands.
 
 ---
 
@@ -547,11 +612,11 @@ Inventory:
 - DNS records
 - TLS certificates
 - MongoDB
-- uploaded student documents
-- application secrets
+- Uploaded student documents
+- Application secrets
 - CI/CD credentials
-- monitoring and alerting
-- backup locations
+- Monitoring and alerting
+- Backup locations
 
 Remove former vendor access and rotate credentials where appropriate.
 
@@ -598,31 +663,39 @@ The secondary environment does not need to duplicate every primary resource cont
 For the GSP production environment, the intended strategy is:
 
 ```text
-Production data
-      |
-      +---- Primary copy
-      |
-      +---- Secondary backup copy
-      |
-      +---- Off-provider / geographically separate copy
+                 Production
+                     |
+          +----------+----------+
+          |                     |
+          v                     v
+     Primary copy          Backup copy
+                               |
+                         +-----+-----+
+                         |           |
+                         v           v
+                     Off-site     Recovery
+                     storage      copy
 ```
 
-MongoDB:
+### MongoDB
 
-- frequent encrypted backups
-- separate backup storage
-- regular restore testing
-- retention policy appropriate to business requirements
+- Frequent encrypted backups
+- Separate backup storage
+- Regular restore testing
+- Retention policy appropriate to business requirements
+- Restore procedure documented and tested
 
-Uploaded documents:
+### Uploaded documents
 
-- primary object storage
-- versioned/protected backup
-- separate recovery copy
-- encryption at rest and in transit
-- documented restoration process
+- Primary object storage
+- Versioned/protected backup
+- Separate recovery copy
+- Encryption at rest and in transit
+- Documented restoration process
 
 The final production design should verify that the selected storage configuration actually satisfies the required 3-2-1 model and one-hour RPO.
+
+The current assessment application does not contain the full student-document upload subsystem, so uploaded-document backup is a proposed production design rather than a claim of implemented functionality in this assessment repository.
 
 ---
 
@@ -667,6 +740,40 @@ Verify external application access
 Continue monitoring
 ```
 
+### Detailed recovery sequence
+
+**09:00–09:15**
+
+- Confirm the outage is regional rather than an application-only issue.
+- Confirm the primary region is unavailable.
+- Freeze unnecessary production changes.
+- Declare the recovery procedure.
+- Establish incident ownership and communication.
+
+**09:15–10:00**
+
+- Activate the prepared DigitalOcean recovery environment.
+- Provision or start the required application and Nginx services.
+- Restore required secrets securely.
+- Verify network and firewall access.
+
+**10:00–11:00**
+
+- Retrieve the latest valid MongoDB backup.
+- Restore MongoDB.
+- Verify database health and application connectivity.
+- Restore the protected student-document copy.
+
+**11:00–12:00**
+
+- Start application containers.
+- Verify application and database health.
+- Validate important application paths.
+- Prepare Cloudflare/DNS traffic movement.
+- Move DNS/origin traffic to the secondary environment.
+- Verify external access.
+- Continue monitoring.
+
 The recovery process should use the previously tested runbook rather than relying on ad-hoc commands during the incident.
 
 ---
@@ -675,17 +782,17 @@ The recovery process should use the previously tested runbook rather than relyin
 
 To reduce future recovery time:
 
-- keep DNS configuration documented
-- minimize unnecessary DNS TTL during planned recovery exercises
-- maintain clear origin records
-- document Cloudflare configuration
-- document WAF rules
-- document cache behavior
-- document TLS configuration
-- keep recovery origin information ready
-- test DNS/origin changes during planned exercises
+- Keep DNS records documented.
+- Keep origin information documented securely.
+- Use a low enough DNS TTL where operationally appropriate.
+- Keep the secondary origin prepared and tested.
+- Use Cloudflare as the stable public entry point.
+- Avoid making application users depend directly on provider-specific origin addresses.
+- Document the exact Cloudflare origin/DNS change required during a regional failure.
+- Test the DNS/origin failover procedure regularly.
+- Keep TLS configuration ready on the secondary environment.
 
-Cloudflare should remain an edge control rather than being treated as the sole recovery mechanism.
+The goal is to make the recovery procedure a controlled origin switch rather than a complete DNS redesign during an incident.
 
 ---
 
@@ -701,6 +808,8 @@ The recovery design should balance:
 - monthly infrastructure cost
 
 A fully active-active secondary environment provides different recovery characteristics from a warm or cold standby, but also introduces additional infrastructure and operational cost.
+
+For the GSP production scenario, the exact monthly cost should be calculated from the selected Linode, DigitalOcean, Cloudflare/R2, storage, bandwidth, monitoring and backup-retention requirements.
 
 The final production choice should be based on the business requirement for the four-hour RTO and one-hour RPO rather than on adding infrastructure for its own sake.
 
@@ -718,14 +827,21 @@ The final production choice should be based on the business requirement for the 
 │       └── init/
 ├── mern/
 │   ├── client/
+│   │   ├── Dockerfile
+│   │   └── ...
 │   └── server/
+│       ├── Dockerfile
+│       ├── db/
+│       ├── routes/
+│       └── ...
 ├── nginx/
 │   ├── nginx.conf
 │   └── active-backend.conf
 ├── scripts/
 │   ├── backup-mongodb.sh
 │   ├── deploy.sh
-│   └── health-check.sh
+│   ├── health-check.sh
+│   └── restore-mongodb.sh
 ├── .env.example
 ├── .gitignore
 ├── docker-compose.yml
@@ -735,22 +851,27 @@ The final production choice should be based on the business requirement for the 
 
 ---
 
-## 21. What Is Implemented vs. Proposed
+## 21. Implementation Status
 
 ### Implemented and tested
 
-- Docker Compose application stack
+- Containerized MERN application
 - MongoDB authentication
 - Least-privilege application user
+- Secrets outside Git
 - Nginx gateway
 - Blue/green deployment
-- Deployment health checks
 - Automatic rollback
 - GitHub Actions self-hosted runner
+- Production checkout synchronization to exact commit
 - Encrypted MongoDB backups
 - Cloudflare R2 backup storage
 - Backup upload verification
+- Scheduled hourly backups
+- Reusable MongoDB restore script
 - MongoDB restore drill
+- Measured assessment restore RTO
+- Observed RPO/data-loss window
 - Application health monitoring
 - Failure notification path testing
 - Operational deployment and recovery commands
@@ -760,9 +881,9 @@ The final production choice should be based on the business requirement for the 
 - Full secondary DigitalOcean recovery environment
 - Complete uploaded-document backup strategy
 - Production Cloudflare/DNS failover procedure
-- Full end-to-end disaster recovery measurement
+- Production-scale 3-2-1 implementation and retention policy
 - Regular scheduled recovery exercises
-- Final production 3-2-1 implementation and retention policy
+- Production cost model based on actual workload and storage requirements
 
 These items are kept separate because the assessment environment does not represent the complete GSP production infrastructure.
 
@@ -774,6 +895,6 @@ Application source:
 
 https://github.com/mongodb-developer/mern-stack-example
 
-Original project licensing and attribution are retained in `LICENSE`.
+The original project licensing and attribution are retained in `LICENSE`.
 
-The assessment work focuses primarily on infrastructure, deployment, security, backup, recovery, monitoring, and operational reliability around the sample application.
+The application was used as the starting point for this assessment; infrastructure and operational work were added around it rather than presenting the sample application as original application development.
