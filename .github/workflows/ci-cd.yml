@@ -1,0 +1,64 @@
+name: CI/CD
+
+on:
+  push:
+    branches:
+      - assessment
+  workflow_dispatch:
+
+jobs:
+  build-test-deploy:
+    runs-on: self-hosted
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Show environment
+        run: |
+          docker --version
+          docker compose version
+          git --version
+
+      - name: Validate Docker Compose
+        run: |
+          docker compose config -q
+
+      - name: Build application images
+        run: |
+          docker compose build api-blue api-green nginx
+
+      - name: Verify MongoDB health
+        run: |
+          if ! docker compose ps --format '{{.Service}} {{.Health}}' mongodb | grep -q 'mongodb healthy'; then
+            echo "MongoDB is not healthy."
+            docker compose ps
+            docker compose logs mongodb
+            exit 1
+          fi
+
+          echo "MongoDB is healthy."
+
+      - name: Deploy using blue-green strategy
+        run: |
+          ./scripts/deploy.sh
+
+      - name: Verify application health
+        run: |
+          curl --fail --silent --show-error \
+            http://localhost:8080/health
+
+      - name: Verify API endpoint
+        run: |
+          curl --fail --silent --show-error \
+            http://localhost:8080/record
+
+      - name: Show active backend
+        run: |
+          echo "Active backend:"
+          cat nginx/active-backend.conf
+
+      - name: Show container status
+        if: always()
+        run: |
+          docker compose ps
