@@ -22,13 +22,24 @@ jobs:
 
       - name: Validate Docker Compose
         run: |
+          cp .env.example .env
           docker compose config -q
+          rm -f .env
 
       - name: Build application images
         run: |
+          cp .env.example .env
           docker compose build api-blue api-green nginx
+          rm -f .env
 
-      - name: Verify MongoDB health
+      - name: Sync deployment checkout
+        working-directory: /opt/study-now/mern-stack-example
+        run: |
+          git fetch origin "$GITHUB_SHA"
+          git reset --hard "$GITHUB_SHA"
+
+      - name: Verify production MongoDB health
+        working-directory: /opt/study-now/mern-stack-example
         run: |
           if ! docker compose ps --format '{{.Service}} {{.Health}}' mongodb | grep -q 'mongodb healthy'; then
             echo "MongoDB is not healthy."
@@ -40,25 +51,28 @@ jobs:
           echo "MongoDB is healthy."
 
       - name: Deploy using blue-green strategy
+        working-directory: /opt/study-now/mern-stack-example
         run: |
           ./scripts/deploy.sh
 
-      - name: Verify application health
+      - name: Verify production application health
         run: |
           curl --fail --silent --show-error \
             http://localhost:8080/health
 
-      - name: Verify API endpoint
+      - name: Verify production API endpoint
         run: |
           curl --fail --silent --show-error \
             http://localhost:8080/record
 
       - name: Show active backend
+        working-directory: /opt/study-now/mern-stack-example
         run: |
           echo "Active backend:"
           cat nginx/active-backend.conf
 
-      - name: Show container status
+      - name: Show production container status
         if: always()
+        working-directory: /opt/study-now/mern-stack-example
         run: |
           docker compose ps
